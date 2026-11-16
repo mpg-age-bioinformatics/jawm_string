@@ -1,0 +1,19 @@
+- scope: process
+  name: "string_network"
+  environment: "docker"
+  parallel: False
+  docker_run_as_user: True
+  var:
+    input_file: "./test/test-input/airway/deseq2_output/annotated/dexamethasone_vs_untreated.results.tsv"
+    project_folder: "./test/test-output"
+    organism: "homo_sapiens"
+    taxon_id: 9606
+    model_formula: "~ cell + dex"
+    string_cache: "./test/.jawm-string-cache"
+
+# Hash real network biology, excluding layout, timing and local provenance.
+- scope: hash
+  include:
+    - ./test/test-output/metadata/string-networks/*/test_nodes.tsv
+    - ./test/test-output/metadata/string-networks/*/test_edges.tsv
+  overwrite: true

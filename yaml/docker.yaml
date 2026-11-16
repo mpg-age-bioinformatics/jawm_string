@@ -1,0 +1,11 @@
+# Docker example; edit the dataset variables before running.
+- scope: global
+  environment: "docker"
+  parallel: False
+  docker_run_as_user: True
+  var:
+    project_folder: /path/to/lake/STUDY
+    organism: "caenorhabditis_elegans"
+    release: '115'
+    # input_file: /path/to/lake/STUDY/deseq2_output/annotated/B_vs_A.results.tsv
+    # string_cache: /shared/reference-cache/string

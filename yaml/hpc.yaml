@@ -1,0 +1,11 @@
+# Slurm and Apptainer template for the cluster HPC.
+# All module, input, output and cache paths must be visible under /nexus.
+- scope: global
+  environment: "apptainer"
+  automated_mount: False
+  environment_apptainer: { "-B": "/nexus:/nexus" }
+  manager: slurm
+  manager_slurm: { "-p": "cluster,dedicated" }
+  # before_script: "module load apptainer"
+  # manager_slurm: { "--ntasks-per-core": "2", "-p": "general,small" }
+  parallel: True

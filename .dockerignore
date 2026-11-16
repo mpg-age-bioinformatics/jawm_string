@@ -1,0 +1,8 @@
+.git
+logs
+test/test-input
+test/test-output
+__pycache__
+**/__pycache__
+*.sif
+*.studio

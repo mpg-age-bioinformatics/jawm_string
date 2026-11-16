@@ -1,0 +1,2 @@
+#jawm_file.py;workflow;parameters.file1.yaml,parameters.file2.yaml;"Test name";test_hash
+string_networks.py;test;./test/yaml/test.yaml;"Real airway RNA-seq STRING network";fe8a6080e1d5b98ca8eca8f21b47af858c04d962c627542052eb6a03f47cd73c

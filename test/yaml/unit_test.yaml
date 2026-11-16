@@ -1,0 +1,12 @@
+- scope: process
+  name: "string_tests"
+  environment: "docker"
+  parallel: False
+  docker_run_as_user: True
+  var:
+    mk.test_output: "./test/test-output"
+
+# Files used for SHA-256 hash generation.
+- scope: hash
+  include: ./test/test-output/string_networks.txt
+  overwrite: true

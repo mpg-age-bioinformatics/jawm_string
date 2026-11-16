@@ -1,0 +1,10 @@
+{
+  "source_url": "https://stringdb-downloads.org/download/species.v12.5.txt",
+  "version": "12.5",
+  "sha256": "4bb4c99c14db8d695decadf3b403a5b87ac490b468a842cbc54ec2e412400fec",
+  "attribution": "STRING Consortium; species names/taxonomy reference",
+  "downloaded": "2026-11-16",
+  "license": "CC BY 4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/",
+  "changes": "Unchanged reference data, gzip compressed."
+}

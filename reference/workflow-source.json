@@ -1,0 +1,6 @@
+{
+  "source": "RNA-seq app string_network.py",
+  "snapshot_date": "2026-11-16",
+  "original_sha256": "722aa7d704549798b02fa447cca2e59a650aa06e55b6c0a86ba6c77ed9180d06",
+  "note": "Scientific kernel embedded in string_networks.py SCRIPT; taxonomy catalog path uses the mounted module reference directory. Persistent-cache and publication wrappers follow it."
+}
