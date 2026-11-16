@@ -1,5 +1,34 @@
 # jawm_string
 
+This is a jawm STRING module.
+
+Installing jawm:
+```
+pip install git+ssh://git@github.com/mpg-age-bioinformatics/jawm.git
+```
+For more information on jawm please visit jawm's repo on [GitHub.com](https://github.com/mpg-age-bioinformatics/jawm/tree/main).
+
+Example usage:
+```
+# clone this module
+git clone git@github.com:mpg-age-bioinformatics/jawm_string.git
+
+cd jawm_string
+
+# download test data
+jawm-test -r download
+
+# docker
+jawm string_networks.py string -p ./yaml/docker.yaml
+
+# slurm & apptainer with multiple yaml files
+jawm string_networks.py string -p ./yaml/docker.yaml ./yaml/hpc.yaml ./yaml/nexus.apptainer.yaml
+```
+
+Additional jawm workflows are available [here (GitHub.com)](https://github.com/mpg-age-bioinformatics?q=jawm_&type=all&language=&sort=).
+
+## STRING-specific details
+
 A JAWM module that creates one default STRING protein-interaction network per
 annotated differential-expression contrast. It uses the RNA-seq app's selection,
 expansion, filtering and visualization-data defaults, with a persistent shared
@@ -22,10 +51,10 @@ Process configuration.
 `network_id` selects a contrast subdirectory. Mapping the parent allows the worker
 to atomically replace a completed contrast directory inside the container.
 
-## Module organization
+### Module organization
 
-The layout follows the modules in `/Users/jboucas/jawm_modules`, including their
-shared test workflow, parameter scopes and inline output-hash configuration.
+The layout follows the JAWM module conventions, including the shared test
+workflow, parameter scopes and inline output-hash configuration.
 
 ```text
 .github/workflows/test.yaml       # Shared JAWM module test workflow
@@ -57,12 +86,11 @@ tests in addition to the common module files. The Python filename remains
 `string_networks.py` to preserve pipeline imports and avoid shadowing Python's
 standard-library `string` module.
 
-## Installation and runtime
+### Runtime image
+
+Build the runtime image locally if needed:
 
 ```sh
-git clone git@github.com:mpg-age-bioinformatics/jawm_string.git
-cd jawm_string
-pip install git+https://github.com/mpg-age-bioinformatics/jawm.git
 docker build -t mpgagebioinformatics/networkx:3.5 -f containers/string/Dockerfile .
 ```
 
@@ -82,7 +110,7 @@ in `yaml/nexus.apptainer.yaml`. Set your site's partition/account in
 Use `automated_mount: false` only if explicit bind/PVC configuration already makes
 all input, module, output and cache paths visible inside the jobs.
 
-## Use from another JAWM pipeline
+### Use from another JAWM pipeline
 
 ```python
 from jawm.utils import load_modules
@@ -104,7 +132,7 @@ Pass `pipeline_file` to record the calling pipeline's Git revision independently
 of the `jawm_string` revision. Production pipelines should load a published
 `jawm_string@<commit>`; an unpinned name is useful while establishing the new repo.
 
-## Run independently on an existing dataset
+### Run independently on an existing dataset
 
 Edit `yaml/docker.yaml` to set `project_folder`, `organism` and optional `release`:
 
@@ -134,7 +162,7 @@ carried into the network. An optional `model_formula` records a known source mod
 standalone runs do not assume a model formula. Sample annotations are read from the contrast's
 `deseq2_output/<contrast>.input.tsv`, falling back to `samples_MasterTable.txt`.
 
-## Defaults and outputs
+### Defaults and outputs
 
 | Setting | Default |
 | --- | --- |
@@ -178,7 +206,7 @@ module/catalog/runtime metadata and artifact checksums match. Changed inputs
 rebuild with cached STRING responses; failed refreshes retain the last completed
 network. Imported source files are provenance, never automatically executed.
 
-## Shared cache and API coordination
+### Shared cache and API coordination
 
 The default cache is `<project_folder>/../.jawm-string-cache/`, outside dataset
 exports and shared across neighboring datasets. Override it globally:
@@ -207,7 +235,7 @@ licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Source
 checksum and attribution are in `reference/species.v12.5.source.json`. Workflow
 snapshot provenance is in `reference/workflow-source.json`.
 
-## Tests
+### Tests
 
 The standard test runs the production network process on real public airway
 RNA-seq measurements and calls STRING 12.5. The fixture contains 80 genes
