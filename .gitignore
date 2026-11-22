@@ -9,5 +9,7 @@ test/test-input/
 *.studio
 .DS_Store
 __init__.py
+# Required when packaging standalone local STRING outputs.
+!/utils/__init__.py
 .submodules/
 tests.txt.tmp
