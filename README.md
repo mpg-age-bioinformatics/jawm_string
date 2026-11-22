@@ -59,6 +59,9 @@ workflow, parameter scopes and inline output-hash configuration.
 ```text
 .github/workflows/test.yaml       # Shared JAWM module test workflow
 string_networks.py                # Importable processes and workflow entry point
+utils/
+    __init__.py
+    local_stringdb.py             # Shared downloads and local SQLite adapter
 containers/string/
     Dockerfile
     requirements.txt
@@ -282,3 +285,66 @@ See `test/README.md` for the fixture paths, download manifest and hash behavior.
 GitHub Actions calls the shared `modules.webhook.yaml` on a self-hosted runner,
 which runs the same real-input `jawm-test` entry. The runner needs the runtime
 image and, until Figshare is configured, the staged input files.
+
+
+## Optional shared local database
+
+Set `STRINGDB` to opt into offline mapping and network queries. The same setting
+works in the standalone STRING workflow and in the RNA-seq workflow:
+
+```bash
+export STRINGDB=/nexus/posix0/MAGE-flaski/service/databases/string
+```
+
+Alternatively, add it to the existing global `var` block in the project YAML:
+
+```yaml
+- scope: global
+  var:
+    STRINGDB: /nexus/posix0/MAGE-flaski/service/databases/string
+```
+
+A nonempty YAML/CLI variable takes precedence over the environment. The JAWM CLI
+also accepts `--global.var.STRINGDB=/nexus/posix0/MAGE-flaski/service/databases/string`.
+If neither supplies a path, the existing shared API cache is used. Unset the
+variable in both places to return to online mode.
+
+Before submitting contrast networks, `string_database` downloads species-specific
+STRING **12.5** protein info, aliases, and detailed functional links, validates
+the gzip files and schemas, and builds an indexed SQLite database. Files live in
+`STRINGDB/12.5/`, prefixed with the taxon ID (e.g. `6239.functional.sqlite`). Other
+species share the version directory without mixing their records. The backend
+also supports the physical detailed-links format when requested by a caller.
+Published manifests record source URLs, SHA-256 hashes, file sizes and the mapping
+policy. Network provenance and restart fingerprints distinguish API and local data.
+
+`STRINGDB/12.5/download.lock` is acquired exclusively across hosts. Contending
+workflows wait, then validate the database before continuing. Downloads and indexes
+are built in a temporary directory and the readiness manifest is published last.
+An ordinary failure releases the lock and leaves no new ready database. After a
+hard kill, the lock is deliberately retained: inspect its hostname and PID, confirm
+that its owner has stopped, and only then remove the stale lock. Waiters time out
+after 24 hours with an explanatory error; they never steal a live lock. Workers
+also check readiness, including when a scheduler skips a previously completed
+preparation step. The shared filesystem must support atomic exclusive creation
+and rename. All jobs need write access for the lock, and the database root must be
+visible inside containers (`mk.string_db` supplies automatic mounts; the Nexus
+configuration explicitly binds `/nexus`).
+
+Local mapping matches exact aliases. Ambiguities prefer an exact preferred-name
+match, then the lexically first STRING protein ID. This reproducible rule may
+differ from the API's best-match ranking. Missing IDs are omitted normally. Links
+are deduplicated as undirected pairs and integer scores are divided by 1000;
+selection, expansion, confidence and evidence filtering still use the network
+worker's existing logic. No gene identifiers are sent to the API in local mode.
+
+The site Apptainer configuration includes `string_database` alongside the network
+and test jobs. When using these local edits, invoke this checkout's `rnaseq.py`
+rather than fetching a fresh `jawm_rnaseq@latest-tag`; these changes have not been
+published upstream.
+
+Run synthetic tests (no bulk downloads) in the runtime image:
+
+```bash
+python -m unittest discover -s test -p 'test_*.py' -v
+```

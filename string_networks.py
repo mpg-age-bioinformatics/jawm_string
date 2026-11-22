@@ -2,6 +2,7 @@ import jawm
 import logging
 import subprocess
 import uuid
+import os
 from pathlib import Path
 
 logger = logging.getLogger("jawm_string")
@@ -257,7 +258,8 @@ class StringClient:
                 if error.code == 404 and method == 'get_string_ids':
                     try:
                         body = json.loads(error.read(65536))
-                        if isinstance(body, dict) and 'Error' in body:
+                        errors = body if isinstance(body, list) else [body]
+                        if errors and all(isinstance(item, dict) and item.get('Error') == 'nothing found' for item in errors):
                             return []
                     except (ValueError, OSError):
                         pass
@@ -810,6 +812,17 @@ def checksum(path):
 
 def run(config, client_factory=CachedStringClient):
     spec = validate({}, config['metadata'])
+    local_client = None
+    database_source = {'backend': 'api', 'url': URL}
+    if config.get('STRINGDB'):
+        import sys
+        sys.path.insert(0, str(Path(config['module_file']).parent))
+        from utils.local_stringdb import LocalStringClient
+        local_client = LocalStringClient(config['STRINGDB'], spec['species'],
+                                         network_type=spec['network_type'])
+        database_source = {'backend': 'local', 'path': str(local_client.folder),
+                           'manifest': local_client.manifest,
+                           'adapter_sha256': checksum(Path(config['module_file']).parent / 'utils' / 'local_stringdb.py')}
     source = Path(config['input'])
     samples = Path(config['samples'])
     output = Path(config['output'])
@@ -823,6 +836,7 @@ def run(config, client_factory=CachedStringClient):
         }.items()
     }
     identity = {
+        'database_source': database_source,
         'files': signatures,
         'settings': spec,
         'metadata': config['metadata'],
@@ -883,7 +897,7 @@ def run(config, client_factory=CachedStringClient):
             annotations = annotations.rename(columns={annotations.columns[0]: 'sample'})
             columns = [sample for sample in annotations['sample'] if sample in frame]
             annotations = annotations[annotations['sample'].isin(columns)]
-            client = client_factory(config['cache'], spec['species'])
+            client = local_client or client_factory(config['cache'], spec['species'])
             _, _, selection = rank_genes(frame, spec)
             summary = build_network(
                 frame,
@@ -901,6 +915,10 @@ def run(config, client_factory=CachedStringClient):
             )
             shutil.copyfile(__file__, temporary / 'string_network.py')
             shutil.copyfile(config['module_file'], temporary / 'string_networks.py')
+            if local_client:
+                (temporary / 'utils').mkdir()
+                for name in ('__init__.py', 'local_stringdb.py'):
+                    shutil.copyfile(Path(config['module_file']).parent / 'utils' / name, temporary / 'utils' / name)
             shutil.copytree(REFERENCE_DIR, temporary / 'reference')
             manifest = {
                 'schema': 1,
@@ -916,6 +934,7 @@ def run(config, client_factory=CachedStringClient):
                 'completed_at': time.time(),
                 'creator': {},
                 'string_url': URL,
+                'database_source': database_source,
                 'notebook_reference': 'ppis.ipynb',
                 'notebook_sha256': NOTEBOOK_SHA256,
                 'input_sha256': signatures['input'],
@@ -943,7 +962,7 @@ def run(config, client_factory=CachedStringClient):
                     'entity_hits': getattr(client, 'hits', 0),
                     'entity_misses': getattr(client, 'misses', 0),
                 },
-                'disclosure': 'Stable gene identifiers and species were sent to STRING by the pipeline; sample expression was retained locally.',
+                'disclosure': ('STRING bulk files were downloaded; gene mapping and network queries ran locally.' if local_client else 'Stable gene identifiers and species were sent to STRING by the pipeline; sample expression was retained locally.'),
             }
             manifest['artifacts_sha256'] = {
                 str(path.relative_to(temporary)): checksum(path)
@@ -993,6 +1012,7 @@ if __name__ == '__main__':
             'samples': r"""{{map.string_samples}}""",
             'output': str(output),
             'cache': r"""{{mk.string_cache}}""",
+            'STRINGDB': r"""{{STRINGDB}}""",
             'module_file': str(REFERENCE_DIR.parent / 'string_networks.py'),
             'metadata': {key: value for key, value in metadata.items() if value},
             'pipeline': r"""{{pipeline}}""",
@@ -1007,6 +1027,7 @@ if __name__ == '__main__':
     var={
         "map.string_module": str(ROOT),
         "input_file": "",
+        "STRINGDB": "",
         "organism": "",
         "release": "",
         "taxon_id": "",
@@ -1028,6 +1049,7 @@ if __name__ == '__main__':
         "string_output": "Parent network output directory (mk.), shared by contrast clones.",
         "network_id": "Stable identifier for this contrast's output subdirectory.",
         "string_cache": "Shared persistent cache with cross-host POSIX flock (mk.).",
+        "STRINGDB": "Optional bulk database root; STRINGDB/12.5/ holds shared files; empty uses the API.",
         "organism": "Scientific organism name, for example caenorhabditis_elegans.",
         "release": "Source Ensembl release, recorded in the network manifest.",
         "taxon_id": "Optional NCBI taxonomy ID; takes precedence over organism.",
@@ -1046,6 +1068,56 @@ if __name__ == '__main__':
 )
 
 
+
+string_database = jawm.Process(
+    name="string_database",
+    script=r'''#!/usr/bin/env python3
+import sys
+from pathlib import Path
+folder = Path(r"""{{map.string_module}}""")
+sys.path.insert(0, str(folder))
+from utils.local_stringdb import ensure_database, resolve_species
+species = resolve_species(
+    r"""{{taxon_id}}""" or r"""{{ncbi_taxon_id}}""",
+    r"""{{organism}}""", folder / 'reference/species.v12.5.tsv.gz')
+ensure_database(r"""{{mk.string_db}}""", species)
+''',
+    var={"map.string_module": str(ROOT), "mk.string_db": "",
+         "taxon_id": "", "ncbi_taxon_id": "", "organism": ""},
+    desc={"string_db": "Shared STRING database root (mk.); versioned files and download.lock live below it.",
+          "string_module": "STRING module directory (map.).",
+          "taxon_id": "NCBI taxon ID.", "ncbi_taxon_id": "Alternative taxon ID.",
+          "organism": "Scientific organism name."},
+    container=STRING_IMAGE,
+    environment="docker",
+    manager_slurm={"-c": 1, "--mem": "4GB", "-t": "48:00:00"},
+)
+
+
+def database_root(variables):
+    value = variables.get("STRINGDB") or os.environ.get("STRINGDB", "")
+    return str(Path(value).expanduser().resolve()) if value else ""
+
+
+def prepare_database(variables):
+    """Prepare the optional shared database and wait before any network starts.
+
+    The workers also validate readiness, since a scheduler may reuse a completed
+    preparation job after the database has been moved or removed.
+    """
+    resolved = dict(string_network.var)
+    resolved.update(variables)
+    root = database_root(resolved)
+    if not root:
+        return
+    process = string_database.clone()
+    process.var.update({"mk.string_db": root, "map.string_module": str(ROOT)})
+    for key in ("organism", "taxon_id", "ncbi_taxon_id"):
+        process.var[key] = resolved.get(key) or ""
+    process.execute()
+    jawm.Process.wait(process.hash)
+
+
 string_tests = jawm.Process(
     name="string_tests",
     script=r'''#!/usr/bin/env python3
@@ -1055,7 +1127,7 @@ from pathlib import Path
 
 folder = Path(r"""{{map.string_module}}""")
 suite = unittest.defaultTestLoader.discover(
-    str(folder / "test"), pattern="test_string_module.py"
+    str(folder / "test"), pattern="test_*.py"
 )
 result = unittest.TextTestRunner(verbosity=2).run(suite)
 if not result.wasSuccessful():
@@ -1105,6 +1177,9 @@ def configure(result_file, variables, pipeline_file=None):
     # overrides work in addition to the caller's dataset variables.
     var = dict(process.var)
     var.update(variables)
+    process.var["STRINGDB"] = database_root(var)
+    if process.var["STRINGDB"]:
+        process.var["mk.string_db"] = process.var["STRINGDB"]
     project = Path(var["project_folder"]).expanduser().resolve()
     contrast = result.name[: -len(".results.tsv")]
     identifier = uuid.uuid5(
@@ -1308,6 +1383,7 @@ if __name__ == "__main__":
         if not results:
             raise ValueError("No annotated contrast results found in " + str(project))
 
+        prepare_database(var)
         string_jobs = []
         string_outputs = []
         for result in results:

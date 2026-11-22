@@ -103,6 +103,40 @@ class StringTests(unittest.TestCase):
             output=str(self.root/'networks'/contrast),cache=str(self.cache),metadata={'organism':'caenorhabditis_elegans','release':'115'},
             pipeline_revision='test-commit',module_file=str(ROOT/'string_networks.py'),container='mpgagebioinformatics/networkx:3.5')
 
+    def test_offline_network_never_calls_api_and_records_provenance(self):
+        from test_local_stringdb import local, fake_download
+        config = self.config('offline')
+        config['STRINGDB'] = str(self.root / 'database')
+        frame = self.worker.pd.read_csv(config['input'], sep='\t')
+        frame['ensembl_gene_id'] = ['WBGene1', 'WBGene2', 'absent1', 'absent2', 'absent3', 'absent4']
+        frame.to_csv(config['input'], sep='\t', index=False)
+        with patch.object(local, '_download', side_effect=fake_download), patch.object(
+                self.worker.CachedStringClient, 'request', side_effect=AssertionError('API called')):
+            manifest = self.worker.run(config)
+        self.assertEqual(manifest['database_source']['backend'], 'local')
+        self.assertEqual(manifest['summary']['edges'], 1)
+        self.assertFalse(self.calls)
+        with patch.object(local, '_download', side_effect=AssertionError('download repeated')):
+            self.assertEqual(self.worker.run(config), manifest)
+        self.assertTrue((Path(config['output']) / 'utils' / 'local_stringdb.py').is_file())
+
+    def test_online_404_nothing_found_list_and_dict_only(self):
+        import io
+        from urllib.error import HTTPError
+        worker, temporary = load_worker()
+        self.addCleanup(temporary.cleanup)
+        for body in [[{'Error': 'nothing found'}], {'Error': 'nothing found'},
+                     [{'Error': 'different failure'}], {'unexpected': 'response'}]:
+            client = worker.StringClient(self.cache, 6239)
+            error = HTTPError('https://example.invalid', 404, 'Not Found', {},
+                              io.BytesIO(json.dumps(body).encode()))
+            with patch.object(client.opener, 'open', side_effect=error), patch.object(worker.time, 'sleep'):
+                if body in [[{'Error': 'nothing found'}], {'Error': 'nothing found'}]:
+                    self.assertEqual(client.request('get_string_ids', ['missing']), [])
+                else:
+                    with self.assertRaisesRegex(ValueError, 'HTTP 404'):
+                        client.request('get_string_ids', ['missing'])
+
     def test_one_network_per_contrast_reuses_queries_and_is_restartable(self):
         first=self.config('one');second=self.config('two')
         manifest=self.worker.run(first);self.assertEqual(len(self.calls),3)
@@ -195,6 +229,40 @@ class StringTests(unittest.TestCase):
             modules=self.root/'modules';shutil.copytree(ROOT,modules/'jawm_string',ignore=shutil.ignore_patterns('.git','logs','__pycache__','.submodules','test-input','test-output'))
             loaded=load_modules(['jawm_string'],modules_root=modules)
         self.assertTrue('string_networks' in loaded or 'string_networks' in sys.modules)
+
+    @unittest.skipUnless(importlib.util.find_spec('jawm'), 'JAWM controller integration requires JAWM.')
+    def test_database_preparation_opt_in_and_rendered_script(self):
+        import os
+        import subprocess
+        from test_local_stringdb import local, fake_download
+        spec = importlib.util.spec_from_file_location('string_networks', ROOT / 'string_networks.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with patch.dict(os.environ, {'STRINGDB': ''}), patch.object(module.string_database, 'clone') as clone:
+            module.prepare_database({})
+            clone.assert_not_called()
+        root = self.root / 'shared database'
+        with patch.object(local, '_download', side_effect=fake_download):
+            local.ensure_database(root, 6239)
+        process = module.string_database.clone()
+        with patch.dict(os.environ, {'STRINGDB': str(root)}), patch.object(
+                module.string_database, 'clone', return_value=process), patch.object(
+                process, 'execute') as execute, patch.object(module.jawm.Process, 'wait') as wait:
+            module.prepare_database({'organism': 'caenorhabditis_elegans'})
+            execute.assert_called_once()
+            wait.assert_called_once_with(process.hash)
+        rendered = process._script_placeholders_and_mkdir(process.script)
+        job = self.root / 'prepare.py'
+        job.write_text(rendered)
+        subprocess.run([sys.executable, str(job)], check=True, capture_output=True, text=True)
+        self.assertFalse((root / '12.5/download.lock').exists())
+        variables = {'STRINGDB': str(root), 'project_folder': str(self.root), 'organism': 'caenorhabditis_elegans'}
+        result = self.root / 'deseq2_output/annotated/contrast.results.tsv'
+        result.parent.mkdir(parents=True)
+        (result.parent.parent / 'samples_MasterTable.txt').write_text('sample\tgroup\ns\tA\n')
+        network = module.configure(result, variables)
+        self.assertEqual(network.var['STRINGDB'], str(root))
+        self.assertEqual(network.var['mk.string_db'], str(root))
 
     @unittest.skipUnless(importlib.util.find_spec('jawm'),'Controller integration requires JAWM; scientific/cache tests run without it.')
     def test_process_clones_and_python_string_name_does_not_collide(self):
