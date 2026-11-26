@@ -45,7 +45,7 @@ def query_in_child(cache):
 
 class StringTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name).resolve()
         global WORKER
         self.worker,temporary=load_worker();self.addCleanup(temporary.cleanup);WORKER=self.worker
         self.cache=self.root/'cache';self.calls=[]
@@ -142,25 +142,43 @@ class StringTests(unittest.TestCase):
         manifest=self.worker.run(first);self.assertEqual(len(self.calls),3)
         self.assertEqual(manifest['settings'],dict(self.worker.DEFAULTS,species=6239))
         other=self.worker.run(second);self.assertEqual(len(self.calls),3);self.assertGreater(other['cache_statistics']['entity_hits'],0)
-        graph=json.loads((Path(first['output'])/'network.json').read_text())
+        graph=json.loads((Path(first['output'])/'one_network.json').read_text())
         self.assertEqual(graph['summary']['seed_proteins'],4);self.assertEqual(graph['summary']['added_proteins'],1)
         self.assertEqual(next(n for n in graph['nodes'] if n['stringId']=='6239.x')['sample.rep_1'],50)
         self.assertEqual(manifest['sample_columns'],['sample.rep_1'])
         with patch.object(self.worker,'build_network',side_effect=AssertionError('must resume')):self.assertEqual(self.worker.run(first),manifest)
         source=Path(first['input']);source.write_text(source.read_text().replace('50','75'))
         updated=self.worker.run(first);self.assertNotEqual(updated['request_fingerprint'],manifest['request_fingerprint']);self.assertEqual(len(self.calls),3)
-        before=(Path(first['output'])/'manifest.json').read_bytes();source.write_text(source.read_text().replace('75','80'))
+        before=(Path(first['output'])/'one_manifest.json').read_bytes();source.write_text(source.read_text().replace('75','80'))
         with patch.object(self.worker,'build_network',side_effect=ValueError('failure')):
             with self.assertRaises(ValueError):self.worker.run(first)
-        self.assertEqual((Path(first['output'])/'manifest.json').read_bytes(),before)
+        self.assertEqual((Path(first['output'])/'one_manifest.json').read_bytes(),before)
+
+    def test_published_files_use_comparison_prefix_and_checksums(self):
+        config = self.config('daf12_vs_WT')
+        manifest = self.worker.run(config)
+        folder = Path(config['output'])
+        files = [path for path in folder.iterdir() if path.is_file()]
+        self.assertTrue(files)
+        self.assertTrue(all(path.name.startswith('daf12_vs_WT_') for path in files))
+        self.assertTrue((folder / 'reference/species.v12.5.tsv.gz').is_file())
+        for name, digest in manifest['artifacts_sha256'].items():
+            self.assertEqual(self.worker.checksum(folder / name), digest)
+        # A damaged published artifact must trigger a rebuild using cached queries.
+        calls = len(self.calls)
+        (folder / 'daf12_vs_WT_nodes.tsv').write_text('damaged')
+        with patch.object(self.worker, 'build_network', wraps=self.worker.build_network) as build:
+            self.worker.run(config)
+            build.assert_called_once()
+        self.assertEqual(len(self.calls), calls)
 
     def test_default_network_graphml_and_empty_selection(self):
         config=self.config('graphml');manifest=self.worker.run(config)
-        graph=self.worker.nx.read_graphml(Path(config['output'])/'network.graphml')
+        graph=self.worker.nx.read_graphml(Path(config['output'])/'graphml_network.graphml')
         self.assertEqual(graph.number_of_nodes(),5);self.assertEqual(graph.number_of_edges(),5)
         self.assertEqual(graph.nodes['6239.x']['sample.rep_1'],50)
         self.assertEqual(graph.nodes['6239.x']['role'],'added');self.assertFalse(graph.nodes['6239.x']['is_DE'])
-        self.assertEqual(manifest['code_sha256'],self.worker.checksum(Path(config['output'])/'string_network.py'))
+        self.assertEqual(manifest['code_sha256'],self.worker.checksum(Path(config['output'])/'graphml_string_network.py'))
         config=self.config('empty');source=Path(config['input'])
         frame=self.worker.pd.read_csv(source,sep='\t');frame['padj']=1;frame.to_csv(source,sep='\t',index=False)
         count=len(self.calls);result=self.worker.run(config)
@@ -194,11 +212,11 @@ class StringTests(unittest.TestCase):
         self.worker.run(config)
         folder = Path(config['output'])
         validate([folder])
-        before = [(folder / name).read_bytes()
+        before = [(folder / ('validation_' + name)).read_bytes()
                   for name in ['test_nodes.tsv', 'test_edges.tsv']]
 
         def edit_table(name, change):
-            path = folder / name
+            path = folder / ('validation_' + name)
             with path.open(newline='') as stream:
                 reader = csv.DictReader(stream, delimiter='\t')
                 columns = reader.fieldnames
@@ -212,11 +230,11 @@ class StringTests(unittest.TestCase):
 
         edit_table('nodes.tsv', lambda rows: rows[0].update(x='12345', y='67890'))
         validate([folder])
-        self.assertEqual(before, [(folder / name).read_bytes()
+        self.assertEqual(before, [(folder / ('validation_' + name)).read_bytes()
                                  for name in ['test_nodes.tsv', 'test_edges.tsv']])
         edit_table('edges.tsv', lambda rows: rows[0].update(score='0.95'))
         validate([folder])
-        self.assertNotEqual(before[1], (folder / 'test_edges.tsv').read_bytes())
+        self.assertNotEqual(before[1], (folder / 'validation_test_edges.tsv').read_bytes())
         edit_table('edges.tsv', lambda rows: rows.clear())
         with self.assertRaisesRegex(ValueError, 'empty network'):
             validate([folder])
@@ -274,6 +292,7 @@ class StringTests(unittest.TestCase):
         (folder.parent/'samples_MasterTable.txt').write_text('sample\tgroup\ns\tA\n')
         processes=[module.configure(folder/(name+'.results.tsv'),{'project_folder':str(project),'organism':'homo_sapiens'}) for name in ['one','two']]
         self.assertNotEqual(processes[0].var['network_id'],processes[1].var['network_id'])
+        self.assertEqual(processes[0].var['mk.string_output'], str(project/'string-networks'))
         self.assertEqual(processes[0].var['mk.string_output'],processes[1].var['mk.string_output'])
         self.assertEqual(processes[0].var['mk.string_cache'],processes[1].var['mk.string_cache'])
         self.assertEqual(processes[0].container,'mpgagebioinformatics/networkx:3.5')
@@ -287,8 +306,12 @@ class StringTests(unittest.TestCase):
         job=self.root/'rendered_job.py';job.write_text(rendered)
         import subprocess
         subprocess.run([sys.executable,str(job)],check=True,capture_output=True,text=True)
-        completed=json.loads((Path(processes[0].var['mk.string_output'])/processes[0].var['network_id']/'manifest.json').read_text())
+        completed=json.loads((Path(processes[0].var['mk.string_output'])/'one'/'one_manifest.json').read_text())
         self.assertEqual(completed['summary']['status'],'no_DE_genes')
         self.assertEqual(completed['sample_columns'],['s'])
+        outputs = project / 'string-networks/one'
+        self.assertEqual(module.report_files(project), {'STRING networks': [
+            str(outputs / 'one_network.graphml'), str(outputs / 'one_manifest.json')]})
+        self.assertFalse((project / 'metadata/string-networks').exists())
 
 if __name__=='__main__':unittest.main()

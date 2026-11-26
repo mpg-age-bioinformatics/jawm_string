@@ -14,6 +14,6 @@
 # Hash real network biology, excluding layout, timing and local provenance.
 - scope: hash
   include:
-    - ./test/test-output/metadata/string-networks/*/test_nodes.tsv
-    - ./test/test-output/metadata/string-networks/*/test_edges.tsv
+    - ./test/test-output/string-networks/*/*_test_nodes.tsv
+    - ./test/test-output/string-networks/*/*_test_edges.tsv
   overwrite: true

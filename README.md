@@ -47,9 +47,10 @@ cloning, `execute()` and `Process.wait()`. Dataset variables can be supplied at
 global or process scope in YAML; process variables are read from the resolved
 Process configuration.
 
-`mk.string_output` maps the parent `metadata/string-networks` directory, and
-`network_id` selects a contrast subdirectory. Mapping the parent allows the worker
-to atomically replace a completed contrast directory inside the container.
+`mk.string_output` maps the parent `string-networks` directory. The comparison
+name from the annotated `<comparison>.results.tsv` selects the subdirectory;
+`network_id` remains a stable identifier in the manifest. Mapping the parent
+allows the worker to atomically replace a completed contrast directory inside the container.
 
 ### Module organization
 
@@ -190,21 +191,28 @@ STRING, only identifiers, taxonomy and network query parameters.
 Each contrast writes to:
 
 ```text
-<project_folder>/metadata/string-networks/<stable-network-id>/
-    network.graphml               # Import into Cytoscape
-    network.json                  # RNA-seq app viewer snapshot
-    nodes.tsv / edges.tsv
-    manifest.json                 # Contrast, settings, runtime, source hashes
-    inputs.tsv / samples.tsv
-    string_network.py             # Executed job script
-    string_networks.py             # Module source
+<project_folder>/string-networks/daf12_vs_WT/
+    daf12_vs_WT_network.graphml    # Import into Cytoscape
+    daf12_vs_WT_network.json       # Viewer snapshot
+    daf12_vs_WT_nodes.tsv
+    daf12_vs_WT_edges.tsv
+    daf12_vs_WT_manifest.json      # Contrast, settings, runtime, source hashes
+    daf12_vs_WT_inputs.tsv
+    daf12_vs_WT_samples.tsv
+    daf12_vs_WT_string_network.py  # Executed job script
+    daf12_vs_WT_string_networks.py # Module source
     reference/
-    ... selection, mapping, expansion and isolate reports
+    utils/                        # Local database adapter, when STRINGDB is used
+    ... comparison-prefixed selection, mapping, expansion and isolate reports
 ```
 
-The app discovers these completed networks after dataset upload or `.studio`
-import. `report_files(project_folder)` returns GraphML and manifest paths for a
-calling pipeline's report. Completed outputs are reused only if input, annotations,
+Every file directly inside a comparison directory is prefixed with
+`<comparison>_`. Files inside `reference/` and `utils/` retain their original names.
+`report_files(project_folder)` returns the prefixed GraphML and manifest paths for
+a calling pipeline's report. Existing `metadata/string-networks/<id>` outputs are
+left in place; rerunning writes the new layout and can reuse the shared cache.
+Consumers that expect the old layout must use the new paths and filenames.
+Completed outputs are reused only if input, annotations,
 module/catalog/runtime metadata and artifact checksums match. Changed inputs
 rebuild with cached STRING responses; failed refreshes retain the last completed
 network. Imported source files are provenance, never automatically executed.
@@ -237,6 +245,18 @@ The species reference is unchanged STRING Consortium data, gzip compressed,
 licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Source,
 checksum and attribution are in `reference/species.v12.5.source.json`. Workflow
 snapshot provenance is in `reference/workflow-source.json`.
+Each completed comparison receives a copy of these three reference files:
+
+- `species.v12.5.tsv.gz`: the STRING 12.5 species catalog, used to resolve scientific
+  organism names to NCBI taxonomy IDs.
+- `species.v12.5.source.json`: catalog download URL, version, checksum, attribution,
+  license, download date, and compression note.
+- `workflow-source.json`: source and checksum of the scientific workflow snapshot
+  embedded in this module.
+
+This directory records taxonomy and workflow provenance. Bulk interaction data
+and SQLite indexes are stored separately under `STRINGDB/12.5/` when enabled;
+API responses are stored in the shared STRING cache.
 
 ### Tests
 
@@ -261,9 +281,9 @@ other modules. Until then, a new checkout needs the local archive extracted in
 `test/test-input`.
 
 The real GraphML, JSON, node/edge tables and manifest are written under
-`test/test-output/metadata/string-networks/<network-id>/`. The test checks that the
-network is nonempty and that these formats agree. `test_nodes.tsv` and
-`test_edges.tsv` provide sorted output for reference-hash comparison, including
+`test/test-output/string-networks/dexamethasone_vs_untreated/`. The test checks that the
+network is nonempty and that these formats agree. `<comparison>_test_nodes.tsv` and
+`<comparison>_test_edges.tsv` provide sorted output for reference-hash comparison, including
 measured expression and STRING confidence/evidence scores. Layout coordinates,
 timestamps and machine-specific provenance are excluded from this comparison.
 No mocked responses are used by this integration test. Initial runs need HTTPS

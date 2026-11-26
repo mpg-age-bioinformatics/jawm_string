@@ -73,23 +73,23 @@ has been fabricated; the line remains commented until the file is uploaded.
 under:
 
 ```text
-test/test-output/metadata/string-networks/2c3292c1aed65bf69ea0f0cee2b74a4e/
-    network.graphml
-    network.json
-    nodes.tsv
-    edges.tsv
-    manifest.json
-    inputs.tsv
-    samples.tsv
+test/test-output/string-networks/dexamethasone_vs_untreated/
+    dexamethasone_vs_untreated_network.graphml
+    dexamethasone_vs_untreated_network.json
+    dexamethasone_vs_untreated_nodes.tsv
+    dexamethasone_vs_untreated_edges.tsv
+    dexamethasone_vs_untreated_manifest.json
+    dexamethasone_vs_untreated_inputs.tsv
+    dexamethasone_vs_untreated_samples.tsv
     ... selection, mapping, expansion and isolate reports
-    test_nodes.tsv
-    test_edges.tsv
+    dexamethasone_vs_untreated_test_nodes.tsv
+    dexamethasone_vs_untreated_test_edges.tsv
 ```
 
 The test rejects an empty network, missing artifacts, inconsistent GraphML/JSON/
 table sizes, missing measured expression, duplicate edges, and scores below the
-requested confidence. The hash scope compares `test_nodes.tsv` and
-`test_edges.tsv`: sorted real node identities, roles, measured fold changes,
+requested confidence. The hash scope compares `<comparison>_test_nodes.tsv` and
+`<comparison>_test_edges.tsv`: sorted real node identities, roles, measured fold changes,
 adjusted p-values, expression, and STRING confidence/evidence scores. Floats are
 formatted consistently; coordinates, timestamps, local paths and cache statistics
 are omitted. A network biology change therefore changes the reference hash.

@@ -826,6 +826,7 @@ def run(config, client_factory=CachedStringClient):
     source = Path(config['input'])
     samples = Path(config['samples'])
     output = Path(config['output'])
+    prefix = config['contrast'] + '_'
     signatures = {
         name: checksum(path)
         for name, path in {
@@ -859,7 +860,7 @@ def run(config, client_factory=CachedStringClient):
         if previous.exists() and (not output.exists()):
             previous.rename(output)
         try:
-            old = json.loads((output / 'manifest.json').read_text())
+            old = json.loads((output / (prefix + 'manifest.json')).read_text())
             artifacts = old.get('artifacts_sha256', {})
             if (
                 old.get('request_fingerprint') == fingerprint
@@ -964,12 +965,17 @@ def run(config, client_factory=CachedStringClient):
                 },
                 'disclosure': ('STRING bulk files were downloaded; gene mapping and network queries ran locally.' if local_client else 'Stable gene identifiers and species were sent to STRING by the pipeline; sample expression was retained locally.'),
             }
+            # Publish every top-level artifact with the source comparison name.
+            # Reference data and importable utility files retain their own names.
+            for path in temporary.iterdir():
+                if path.is_file():
+                    path.rename(path.with_name(prefix + path.name))
             manifest['artifacts_sha256'] = {
                 str(path.relative_to(temporary)): checksum(path)
                 for path in temporary.rglob('*')
                 if path.is_file()
             }
-            atomic_json(temporary / 'manifest.json', manifest)
+            atomic_json(temporary / (prefix + 'manifest.json'), manifest)
             if previous.exists():
                 shutil.rmtree(previous)
             if output.exists():
@@ -978,7 +984,7 @@ def run(config, client_factory=CachedStringClient):
             if previous.exists():
                 shutil.rmtree(previous)
             print(
-                'Completed STRING network: ' + str(output / 'network.graphml'),
+                'Completed STRING network: ' + str(output / (prefix + 'network.graphml')),
                 flush=True,
             )
             return manifest
@@ -991,7 +997,7 @@ if __name__ == '__main__':
     source = Path(r"""{{map.string_input}}""")
     project = Path(r"""{{project_folder}}""")
     contrast = source.name[: -len('.results.tsv')]
-    output = Path(r"""{{mk.string_output}}""") / r"""{{network_id}}"""
+    output = Path(r"""{{mk.string_output}}""") / contrast
     REFERENCE_DIR = Path(r"""{{map.string_module}}""") / 'reference'
     metadata = {
         'organism': r"""{{organism}}""",
@@ -1004,7 +1010,7 @@ if __name__ == '__main__':
     }
     run(
         {
-            'id': output.name,
+            'id': r"""{{network_id}}""",
             'dataset': project.name,
             'contrast': contrast,
             'name': contrast + ' · STRING (default)',
@@ -1047,7 +1053,7 @@ if __name__ == '__main__':
         "string_samples": "Contrast sample table or samples_MasterTable.txt (map.).",
         "string_module": "Module directory containing the taxonomy reference (map.).",
         "string_output": "Parent network output directory (mk.), shared by contrast clones.",
-        "network_id": "Stable identifier for this contrast's output subdirectory.",
+        "network_id": "Stable network identifier recorded in the manifest.",
         "string_cache": "Shared persistent cache with cross-host POSIX flock (mk.).",
         "STRINGDB": "Optional bulk database root; STRINGDB/12.5/ holds shared files; empty uses the API.",
         "organism": "Scientific organism name, for example caenorhabditis_elegans.",
@@ -1213,7 +1219,7 @@ def configure(result_file, variables, pipeline_file=None):
             "map.string_input": str(result),
             "map.string_samples": str(samples),
             "map.string_module": str(ROOT),
-            "mk.string_output": str(project / "metadata/string-networks"),
+            "mk.string_output": str(project / "string-networks"),
             "network_id": identifier,
             "mk.string_cache": str(cache),
             "pipeline": "jawm_rnaseq" if pipeline_file else "jawm_string",
@@ -1230,9 +1236,9 @@ def configure(result_file, variables, pipeline_file=None):
 
 def report_files(project_folder):
     """Return network artifacts for the calling pipeline's report manifest."""
-    folder = Path(project_folder) / "metadata/string-networks"
-    files = sorted(folder.glob("*/network.graphml"))
-    files += sorted(folder.glob("*/manifest.json"))
+    folder = Path(project_folder) / "string-networks"
+    files = sorted(folder.glob("*/*_network.graphml"))
+    files += sorted(folder.glob("*/*_manifest.json"))
     return {"STRING networks": [str(path) for path in files]}
 
 
@@ -1259,6 +1265,7 @@ def validate_test_outputs(folders):
             writer.writerows(rows)
 
     for folder in folders:
+        prefix = folder.name + "_"
         for name in [
             "network.graphml",
             "network.json",
@@ -1269,11 +1276,11 @@ def validate_test_outputs(folders):
             "samples.tsv",
             "mapping.tsv",
         ]:
-            if not (folder / name).is_file():
-                raise ValueError("Missing real test artifact: " + str(folder / name))
-        manifest = json.loads((folder / "manifest.json").read_text())
-        nodes = read_table(folder / "nodes.tsv")
-        edges = read_table(folder / "edges.tsv")
+            if not (folder / (prefix + name)).is_file():
+                raise ValueError("Missing real test artifact: " + str(folder / (prefix + name)))
+        manifest = json.loads((folder / (prefix + "manifest.json")).read_text())
+        nodes = read_table(folder / (prefix + "nodes.tsv"))
+        edges = read_table(folder / (prefix + "edges.tsv"))
         if len(nodes) < 2 or not edges:
             raise ValueError(
                 "The live STRING integration test produced an empty network."
@@ -1287,8 +1294,8 @@ def validate_test_outputs(folders):
             raise ValueError(
                 "Measured sample expression is missing from network nodes."
             )
-        snapshot = json.loads((folder / "network.json").read_text())
-        graphml = ET.parse(folder / "network.graphml")
+        snapshot = json.loads((folder / (prefix + "network.json")).read_text())
+        graphml = ET.parse(folder / (prefix + "network.graphml"))
         namespace = {"g": "http://graphml.graphdrawing.org/xmlns"}
         if (
             len(snapshot["nodes"]) != len(nodes)
@@ -1315,7 +1322,7 @@ def validate_test_outputs(folders):
                 if record[key]:
                     record[key] = format(float(record[key]), ".12g")
             canonical_nodes.append(record)
-        write_table(folder / "test_nodes.tsv", node_columns, canonical_nodes)
+        write_table(folder / (prefix + "test_nodes.tsv"), node_columns, canonical_nodes)
 
         # An undirected edge has the same identity in either API orientation.
         score_columns = [
@@ -1353,7 +1360,7 @@ def validate_test_outputs(folders):
                 }
             )
         canonical_edges.sort(key=lambda row: (row["stringId_A"], row["stringId_B"]))
-        write_table(folder / "test_edges.tsv", edge_columns, canonical_edges)
+        write_table(folder / (prefix + "test_edges.tsv"), edge_columns, canonical_edges)
         logger.info(
             "Real STRING test: %s nodes, %s edges; artifacts in %s",
             len(nodes),
@@ -1392,7 +1399,7 @@ if __name__ == "__main__":
             string_jobs.append(string_network_.hash)
             string_outputs.append(
                 Path(string_network_.var["mk.string_output"])
-                / string_network_.var["network_id"]
+                / result.name[: -len(".results.tsv")]
             )
 
         jawm.Process.wait(string_jobs)
